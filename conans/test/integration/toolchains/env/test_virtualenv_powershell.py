@@ -114,3 +114,46 @@ def test_virtualenv_test_package():
     assert "MYPS1!!!!" in client.out
     assert "MYVC_CUSTOMVAR1=PATATA1" in client.out
     assert "MYVC_CUSTOMVAR2=PATATA2" in client.out
+
+@pytest.mark.skipif(platform.system() != "Windows", reason="Requires Windows powershell")
+def test_vcvars():
+    client = TestClient()
+    conanfile = textwrap.dedent(r"""
+        from conan import ConanFile
+        from conan.tools.cmake import CMake, cmake_layout, CMakeToolchain, CMakeDeps
+
+        class Conan(ConanFile):
+            settings = "os", "compiler", "build_type", "arch"
+
+            generators = 'CMakeDeps', 'CMakeToolchain'
+
+            def layout(self):
+                cmake_layout(self)
+    """)
+    client.save({"conanfile.py": conanfile})
+    hello_cpp = textwrap.dedent(r"""
+        #include "gtest/gtest.h"
+
+        int main(int argc, char **argv) {
+          ::testing::InitGoogleTest(&argc, argv);
+          return RUN_ALL_TESTS();
+        }
+    """)
+    client.save({"hello.cpp": hello_cpp})
+    cmakelists = textwrap.dedent(r"""
+        cmake_minimum_required(VERSION 3.26)
+
+        project(hello-world LANGUAGES CXX)
+        message("C++ compiler: ${CMAKE_CXX_COMPILER}")
+
+        find_package(GTest REQUIRED)
+
+        add_executable(hello hello.cpp)
+        target_link_libraries(hello PRIVATE GTest::gtest GTest::gtest_main)
+    """)
+    client.save({"CMakeLists.txt": cmakelists})
+    client.run("install . -c tools.env.virtualenv:powershell=True -c tools.cmake.cmaketoolchain:generator=Ninja -s compiler.version=193")
+    client.run_command(r".\build\Release\generators\conanbuild.ps1")
+    client.run_command("cmake --preset conan-release", assert_error=True)
+    print(client.out)
+    assert 'CMake Error: CMake was unable to find a build program corresponding to "Ninja".' in client.out
