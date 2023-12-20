@@ -7,7 +7,7 @@ from conan.errors import ConanException, ConanInvalidConfiguration
 from conan.tools.scm import Version
 from conan.tools.intel.intel_cc import IntelCC
 
-CONAN_VCVARS_FILE = "conanvcvars.bat"
+CONAN_VCVARS_FILE = "conanvcvars"
 
 
 def check_min_vs(conanfile, version, raise_invalid=True):
@@ -132,23 +132,38 @@ class VCVars:
             vcvars_ver = _vcvars_vers(conanfile, compiler, vs_version)
         vcvarsarch = _vcvars_arch(conanfile)
 
+        is_ps1 = conanfile.conf.get("tools.env.virtualenv:powershell", check_type=bool)
+        if is_ps1 and int(vs_version) >= 16:
+            vcvars = vcvars_command_ps1(vs_version, architecture=vcvarsarch, vs_install_path=vs_install_path)
+            extension = ".ps1"
+            vcvars_ver = ""
         # The vs_install_path is like
         # C:\Program Files (x86)\Microsoft Visual Studio\2019\Community
         # C:\Program Files (x86)\Microsoft Visual Studio\2017\Community
         # C:\Program Files (x86)\Microsoft Visual Studio 14.0
-        vcvars = vcvars_command(vs_version, architecture=vcvarsarch, platform_type=None,
+        else:
+            vcvars = vcvars_command(vs_version, architecture=vcvarsarch, platform_type=None,
                                 winsdk_version=None, vcvars_ver=vcvars_ver,
                                 vs_install_path=vs_install_path)
+            extension = ".bat"
+        #add version too
+        if is_ps1:
+            content = textwrap.dedent(f"""
+            echo conanvcvars.ps1: Activating environment Visual Studio {vs_version} - {vcvarsarch}
+            {vcvars}
+            """)
+        else:
+            content = textwrap.dedent("""\
+                @echo off
+                set __VSCMD_ARG_NO_LOGO=1
+                set VSCMD_SKIP_SENDTELEMETRY=1
+                echo conanvcvars.bat: Activating environment Visual Studio {} - {} - vcvars_ver={}
+                {}
+                """.format(vs_version, vcvarsarch, vcvars_ver, vcvars))
 
-        content = textwrap.dedent("""\
-            @echo off
-            set __VSCMD_ARG_NO_LOGO=1
-            set VSCMD_SKIP_SENDTELEMETRY=1
-            echo conanvcvars.bat: Activating environment Visual Studio {} - {} - vcvars_ver={}
-            {}
-            """.format(vs_version, vcvarsarch, vcvars_ver, vcvars))
         from conan.tools.env.environment import create_env_script
-        create_env_script(conanfile, content, CONAN_VCVARS_FILE, scope)
+        print(CONAN_VCVARS_FILE + extension)
+        create_env_script(conanfile, content, CONAN_VCVARS_FILE + extension, scope)
 
 
 def vs_ide_version(conanfile):
@@ -226,6 +241,21 @@ def vcvars_command(version, architecture=None, platform_type=None, winsdk_versio
     if vcvars_ver:
         cmd.append("-vcvars_ver=%s" % vcvars_ver)
     return " ".join(cmd)
+
+def vcvars_command_ps1(version, architecture=None, keep_location=True, vs_install_path=None):
+    ps = []
+    vs_path = os.path.join(vs_installation_path(version), "Common7\Tools\Launch-VsDevShell.ps1")
+    ps.append(f'& "{vs_path}"')
+    #this should be 17.1
+    if architecture and int(version) >= 17:
+        #do we want to separate target architecture?
+        ps.append(f'-Arch {architecture} -HostArch {architecture}')
+    if keep_location:
+        ps.append('-SkipAutomaticLocation')
+        #useless join?
+    return " ".join(ps)
+
+#& "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
 
 
 def _vcvars_path(version, vs_install_path):
